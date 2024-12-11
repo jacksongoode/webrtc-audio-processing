@@ -55,6 +55,7 @@ mod webrtc {
     use std::{path::Path, process::Command};
 
     const BUNDLED_SOURCE_PATH: &str = "./webrtc-audio-processing";
+    const BUNDLED_SOURCE_PATH_ABSEIL: &str = "./abseil-cpp";
 
     pub(super) fn get_build_paths() -> Result<(Vec<PathBuf>, Vec<PathBuf>), Error> {
         let include_path = out_dir().join("include");
@@ -72,6 +73,10 @@ mod webrtc {
 
         let build_dir = out_dir();
         let install_dir = out_dir();
+
+        let abseil_build_dir = build_dir.join(BUNDLED_SOURCE_PATH_ABSEIL);
+        std::fs::create_dir_all(&abseil_build_dir)?;
+        cmake::Config::new(BUNDLED_SOURCE_PATH_ABSEIL).cxxflag("-std=c++17").build();
 
         let webrtc_build_dir = build_dir.join(BUNDLED_SOURCE_PATH);
         let mut meson = Command::new("meson");
