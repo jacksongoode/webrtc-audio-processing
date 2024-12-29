@@ -9,8 +9,8 @@ fn out_dir() -> PathBuf {
 mod webrtc {
     use super::*;
 
-    const LIB_NAME: &str = "webrtc-audio-processing-1";
-    const LIB_MIN_VERSION: &str = "1.0";
+    const LIB_NAME: &str = "webrtc-audio-processing-2";
+    const LIB_MIN_VERSION: &str = "2.0";
 
     pub(super) fn get_build_paths() -> Result<(Vec<PathBuf>, Vec<PathBuf>), Error> {
         let (pkgconfig_include_path, pkgconfig_lib_path) = find_pkgconfig_paths()?;
@@ -60,7 +60,7 @@ mod webrtc {
     pub(super) fn get_build_paths() -> Result<(Vec<PathBuf>, Vec<PathBuf>), Error> {
         let include_path = out_dir().join("include");
         let lib_path = out_dir().join("lib");
-        Ok((vec![include_path.join("webrtc-audio-processing-1"), include_path], vec![lib_path]))
+        Ok((vec![include_path.join("webrtc-audio-processing-2"), include_path], vec![lib_path]))
     }
 
     pub(super) fn build_if_necessary() -> Result<(), Error> {
@@ -110,9 +110,9 @@ fn main() -> Result<(), Error> {
     }
 
     if cfg!(feature = "bundled") {
-        println!("cargo:rustc-link-lib=static=webrtc-audio-processing-1");
+        println!("cargo:rustc-link-lib=static=webrtc-audio-processing-2");
     } else {
-        println!("cargo:rustc-link-lib=dylib=webrtc-audio-processing-1");
+        println!("cargo:rustc-link-lib=dylib=webrtc-audio-processing-2");
     }
 
     if cfg!(target_os = "macos") {
