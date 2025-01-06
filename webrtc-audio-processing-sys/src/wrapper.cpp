@@ -1,9 +1,22 @@
 #include "wrapper.hpp"
-
 #include <algorithm>
 #include <memory>
 
+// Define platform-specific types before WebRTC includes
+#if defined(_WIN32)
+#define WEBRTC_WIN 
+#define NOMINMAX
+namespace rtc {
+typedef void* PlatformFile;
+}
+#else
 #define WEBRTC_POSIX
+namespace rtc {
+typedef int PlatformFile;
+}
+#endif
+
+#include "absl/types/optional.h"
 
 namespace webrtc_audio_processing_wrapper {
 namespace {
@@ -33,7 +46,7 @@ OptionalBool from_absl_optional(const absl::optional<bool>& optional) {
 
 struct AudioProcessing {
   std::unique_ptr<webrtc::AudioProcessing> processor;
-  webrtc::AudioProcessing::Config config;
+  webrtc::Config config;
   webrtc::StreamConfig capture_stream_config;
   webrtc::StreamConfig render_stream_config;
   absl::optional<int> stream_delay_ms;
@@ -45,7 +58,7 @@ AudioProcessing* audio_processing_create(
     int sample_rate_hz,
     int* error) {
   AudioProcessing* ap = new AudioProcessing;
-  ap->processor.reset(webrtc::AudioProcessingBuilder().Create());
+  ap->processor.reset(webrtc::AudioProcessing::Create());
 
   const bool has_keyboard = false;
   ap->capture_stream_config = webrtc::StreamConfig(
@@ -75,7 +88,7 @@ void initialize(AudioProcessing* ap) {
 }
 
 int process_capture_frame(AudioProcessing* ap, float** channels) {
-  if (ap->config.echo_canceller.enabled) {
+  if (ap->processor->echo_cancellation()->is_enabled()) {
     ap->processor->set_stream_delay_ms(
         ap->stream_delay_ms.value_or(0));
   }
@@ -90,19 +103,25 @@ int process_render_frame(AudioProcessing* ap, float** channels) {
 }
 
 Stats get_stats(AudioProcessing* ap) {
-  const webrtc::AudioProcessingStats& stats = ap->processor->GetStatistics();
+  auto* level_est = ap->processor->level_estimator();
+  auto* voice_det = ap->processor->voice_detection();
+  auto* aec = ap->processor->echo_cancellation();
+  webrtc::EchoCancellation::Metrics metrics;
+  if (aec) {
+    aec->GetMetrics(&metrics);
+  }
 
   return Stats {
-      from_absl_optional(stats.output_rms_dbfs),
-      from_absl_optional(stats.voice_detected),
-      from_absl_optional(stats.echo_return_loss),
-      from_absl_optional(stats.echo_return_loss_enhancement),
-      from_absl_optional(stats.divergent_filter_fraction),
-      from_absl_optional(stats.delay_median_ms),
-      from_absl_optional(stats.delay_standard_deviation_ms),
-      from_absl_optional(stats.residual_echo_likelihood),
-      from_absl_optional(stats.residual_echo_likelihood_recent_max),
-      from_absl_optional(stats.delay_ms),
+    from_absl_optional(level_est ? level_est->RMS() : absl::optional<int>()),
+    from_absl_optional(voice_det ? voice_det->stream_has_voice() : absl::optional<bool>()),
+    from_absl_optional(aec ? absl::optional<double>(static_cast<double>(metrics.echo_return_loss)) : absl::optional<double>()),
+    from_absl_optional(aec ? absl::optional<double>(static_cast<double>(metrics.echo_return_loss_enhancement)) : absl::optional<double>()),
+    OptionalDouble{},  // divergent_filter_fraction
+    OptionalInt{},     // delay_median_ms
+    OptionalInt{},     // delay_standard_deviation_ms
+    OptionalDouble{},  // residual_echo_likelihood
+    OptionalDouble{},  // residual_echo_likelihood_recent_max
+    OptionalInt{},     // delay_ms
   };
 }
 
@@ -110,13 +129,12 @@ int get_num_samples_per_frame(AudioProcessing* ap) {
     return ap->capture_stream_config.sample_rate_hz() * webrtc::AudioProcessing::kChunkSizeMs / 1000;
 }
 
-void set_config(AudioProcessing* ap, const webrtc::AudioProcessing::Config& config) {
-  ap->config = config;
-  ap->processor->ApplyConfig(config);
+void set_config(AudioProcessing* ap, const webrtc::ProcessingConfig& config) {
+  ap->processor->Initialize(config);
 }
 
-void set_runtime_setting(AudioProcessing* ap, webrtc::AudioProcessing::RuntimeSetting setting) {
-  ap->processor->SetRuntimeSetting(setting);
+void set_runtime_setting(AudioProcessing* ap, webrtc::Config setting) {
+  ap->processor->Initialize(webrtc::ProcessingConfig());  // Reset with default config
 }
 
 void set_stream_delay_ms(AudioProcessing* ap, int delay) {

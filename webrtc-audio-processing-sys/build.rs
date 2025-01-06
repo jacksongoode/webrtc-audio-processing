@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Error, Result};
 use std::path::PathBuf;
+use std::env;
 
 fn out_dir() -> PathBuf {
     std::env::var("OUT_DIR").expect("OUT_DIR environment var not set.").into()
@@ -58,9 +59,52 @@ mod webrtc {
     const BUNDLED_SOURCE_PATH_ABSEIL: &str = "./abseil-cpp";
 
     pub(super) fn get_build_paths() -> Result<(Vec<PathBuf>, Vec<PathBuf>), Error> {
-        let include_path = out_dir().join("include");
-        let lib_path = out_dir().join("lib");
-        Ok((vec![include_path.join("webrtc-audio-processing-2"), include_path], vec![lib_path]))
+        let build_dir = out_dir();
+        let install_dir = out_dir();
+
+        // Build abseil-cpp first
+        let abseil_build_dir = build_dir.join("abseil-cpp");
+        std::fs::create_dir_all(&abseil_build_dir)?;
+        cmake::Config::new("abseil-cpp")
+            .cxxflag("-std=c++17")
+            .build();
+
+        // Build webrtc-audio-processing
+        let webrtc_build_dir = build_dir.join("webrtc-audio-processing");
+        std::fs::create_dir_all(&webrtc_build_dir)?;
+        
+        // Add the WebRTC source directory to include paths
+        let webrtc_src_dir = PathBuf::from("webrtc-audio-processing");
+        
+        let mut meson = Command::new("meson");
+        let status = meson
+            .args(&["--prefix", install_dir.to_str().unwrap()])
+            .arg("-Ddefault_library=static")
+            .arg(&webrtc_src_dir)
+            .arg(&webrtc_build_dir)
+            .status()
+            .context("Failed to execute meson. Do you have it installed?")?;
+        assert!(status.success(), "Command failed: {:?}", &meson);
+
+        let mut ninja = Command::new("ninja");
+        let status = ninja
+            .args(&["-C", webrtc_build_dir.to_str().unwrap()])
+            .arg("install")
+            .status()
+            .context("Failed to execute ninja. Do you have it installed?")?;
+        assert!(status.success(), "Command failed: {:?}", &ninja);
+
+        // Include both the installed headers and the source headers
+        let include_paths = vec![
+            install_dir.join("include/webrtc-audio-processing-2"),
+            install_dir.join("include"),
+            webrtc_src_dir.clone(),
+            webrtc_src_dir.join("webrtc"),
+        ];
+        
+        let lib_paths = vec![install_dir.join("lib")];
+        
+        Ok((include_paths, lib_paths))
     }
 
     pub(super) fn build_if_necessary() -> Result<(), Error> {
@@ -102,28 +146,9 @@ mod webrtc {
 }
 
 fn main() -> Result<(), Error> {
-    webrtc::build_if_necessary()?;
     let (include_dirs, lib_dirs) = webrtc::get_build_paths()?;
 
-    for dir in &lib_dirs {
-        println!("cargo:rustc-link-search=native={}", dir.display());
-    }
-
-    if cfg!(feature = "bundled") {
-        println!("cargo:rustc-link-lib=static=webrtc-audio-processing-2");
-    } else {
-        println!("cargo:rustc-link-lib=dylib=webrtc-audio-processing-2");
-    }
-
-    if cfg!(target_os = "macos") {
-        // TODO: Remove after confirming this is not necessary.
-        //println!("cargo:rustc-link-lib=dylib=c++");
-        println!("cargo:rustc-link-lib=framework=CoreFoundation");
-    } else {
-        // TODO: Remove after confirming this is not necessary.
-        //println!("cargo:rustc-link-lib=dylib=stdc++");
-    }
-
+    // Build wrapper
     cc::Build::new()
         .cpp(true)
         .file("src/wrapper.cpp")
@@ -135,10 +160,23 @@ fn main() -> Result<(), Error> {
 
     println!("cargo:rustc-link-lib=static=webrtc_audio_processing_wrapper");
 
-    let binding_file = out_dir().join("bindings.rs");
+    // Add include directories to bindgen
     let mut builder = bindgen::Builder::default()
         .header("src/wrapper.hpp")
         .clang_args(&["-x", "c++", "-std=c++17", "-fparse-all-comments"])
+        .clang_args(&[
+            if cfg!(target_os = "macos") {
+                "-DWEBRTC_POSIX"
+            } else if cfg!(target_os = "linux") {
+                "-DWEBRTC_POSIX"
+            } else if cfg!(target_os = "windows") {
+                "-DWEBRTC_WIN"
+            } else {
+                "-DWEBRTC_POSIX"
+            },
+            "-I.",
+            "-Iwebrtc-audio-processing",
+        ])
         .generate_comments(true)
         .enable_cxx_namespaces()
         .allowlist_type("webrtc::AudioProcessing_Error")
@@ -147,18 +185,38 @@ fn main() -> Result<(), Error> {
         .allowlist_type("webrtc::StreamConfig")
         .allowlist_type("webrtc::ProcessingConfig")
         .allowlist_function("webrtc_audio_processing_wrapper::.*")
-        // The functions returns std::string, and is not FFI-safe.
         .blocklist_item("webrtc::AudioProcessing_Config_ToString")
         .opaque_type("std::.*")
         .derive_debug(true)
         .derive_default(true);
+
     for dir in &include_dirs {
         builder = builder.clang_arg(&format!("-I{}", dir.display()));
     }
-    builder
+
+    // Add library directories to linker
+    for dir in &lib_dirs {
+        println!("cargo:rustc-link-search=native={}", dir.display());
+    }
+
+    if cfg!(feature = "bundled") {
+        println!("cargo:rustc-link-lib=static=webrtc-audio-processing-2");
+    } else {
+        println!("cargo:rustc-link-lib=dylib=webrtc-audio-processing-2");
+    }
+
+    if cfg!(target_os = "macos") {
+        println!("cargo:rustc-link-lib=framework=CoreFoundation");
+    }
+
+    // Generate bindings
+    let bindings = builder
         .generate()
-        .expect("Unable to generate bindings")
-        .write_to_file(&binding_file)
+        .expect("Unable to generate bindings");
+
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    bindings
+        .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
 
     Ok(())

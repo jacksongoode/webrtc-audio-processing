@@ -12,7 +12,6 @@
         mute: true,
     },
     config: {
-        enable_transient_suppressor: false,
         enable_high_pass_filter: true,
     },
 }

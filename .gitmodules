@@ -4,3 +4,4 @@
 [submodule "webrtc-audio-processing-sys/abseil-cpp"]
 	path = webrtc-audio-processing-sys/abseil-cpp
 	url = https://github.com/abseil/abseil-cpp
+	branch = lts_2024_07_22

@@ -1,11 +1,10 @@
-// This is a c++ header file, but we are using minimal c++ constructs and not
-// including any complex header files to keep Rust interoperability simple.
-// The provided functions are thread-safe.
-//
-// TODO: Add support for AEC dump. webrtc-audio-processing library does not include TaskQueue
-// implementation, which is needed.
+#pragma once
 
-#include <modules/audio_processing/include/audio_processing.h>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include "webrtc/modules/audio_processing/include/audio_processing.h"
 
 namespace webrtc_audio_processing_wrapper {
 
@@ -69,10 +68,10 @@ int get_num_samples_per_frame(AudioProcessing* ap);
 // This config is intended to be used during setup, and to enable/disable top-level processing
 // effects. Use during processing may cause undesired submodule resets, affecting the audio quality.
 // Use the RuntimeSetting construct for runtime configuration.
-void set_config(AudioProcessing* ap, const webrtc::AudioProcessing::Config& config);
+void set_config(AudioProcessing* ap, const webrtc::ProcessingConfig& config);
 
-// Enqueues a runtime setting.
-void set_runtime_setting(AudioProcessing* ap, webrtc::AudioProcessing::RuntimeSetting setting);
+// Runtime settings are now handled through Config API
+void set_runtime_setting(AudioProcessing* ap, webrtc::Config setting);
 
 // Sets the |delay| in ms between process_render_frame() receiving a far-end frame and
 // process_capture_frame() receiving a near-end frame containing the corresponding echo.
